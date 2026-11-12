@@ -13,10 +13,24 @@
       <h1>incidents</h1>
       <p class="sub">sched-prod · tonight</p>
     </header>
-    <main data-testid="board">
-      <p data-testid="loader" class="loader" role="status">Loading incidents…</p>
-      <p data-testid="empty" class="empty" hidden>No incidents tonight.</p>
-      <ul data-testid="incident-list" class="list" hidden></ul>
+    <main data-testid="board" class="board">
+      <section class="feed">
+        <p data-testid="loader" class="loader" role="status">Loading incidents…</p>
+        <p data-testid="empty" class="empty" hidden>No incidents tonight.</p>
+        <ul data-testid="incident-list" class="list" hidden></ul>
+      </section>
+      <aside data-testid="incident-panel" class="panel" aria-live="polite" hidden>
+        <div class="panel-head">
+          <strong class="panel-id"></strong>
+          <span class="panel-sev"></span>
+          <button type="button" class="panel-close" aria-label="Close panel">×</button>
+        </div>
+        <p class="panel-service"></p>
+        <p class="panel-summary"></p>
+        <p>opened <time></time></p>
+        <button type="button" data-testid="panel-ack" class="panel-ack">Ack</button>
+        <p class="panel-acked" hidden>acked</p>
+      </aside>
     </main>
     <footer>sched-prod incident board · build <span data-testid="build-sha"></span></footer>
   </body>

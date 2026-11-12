@@ -6,9 +6,12 @@ const board = document.querySelector('[data-testid="board"]');
 const list = document.querySelector('[data-testid="incident-list"]');
 const loader = document.querySelector('[data-testid="loader"]');
 const empty = document.querySelector('[data-testid="empty"]');
+const panel = document.querySelector('[data-testid="incident-panel"]');
 
 const acked = new Set();
 const rows = new Map();
+const incidents = new Map();
+let selectedId = null;
 
 const timeFormat = new Intl.DateTimeFormat(navigator.languages?.[0] ?? navigator.language, {
   day: '2-digit',
@@ -27,45 +30,6 @@ function localTime(iso) {
   return Number.isNaN(d.getTime()) ? iso : timeFormat.format(d);
 }
 
-function createRow(incident) {
-  const li = document.createElement('li');
-  li.dataset.testid = 'incident-row';
-  li.dataset.id = incident.id;
-  li.innerHTML = `<span class="id"></span><span class="sev"></span><span class="what"></span><time></time><span class="action"></span>`;
-  li.querySelector('.id').textContent = incident.id;
-  li.querySelector('.action').append(acked.has(incident.id) ? ackedMark() : ackButton(incident.id));
-  return li;
-}
-
-function updateRow(li, incident) {
-  li.className = `row ${incident.severity}`;
-  li.querySelector('.sev').textContent = incident.severity;
-  li.querySelector('.what').textContent = `${incident.service} · ${incident.region} · ${incident.summary}`;
-  const time = li.querySelector('time');
-  time.dateTime = incident.openedAt;
-  time.title = incident.openedAt;
-  time.textContent = localTime(incident.openedAt);
-}
-
-function ackButton(id) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.dataset.testid = 'ack';
-  button.textContent = 'Ack';
-  button.addEventListener('click', async () => {
-    button.disabled = true;
-    try {
-      await ack(id);
-      acked.add(id);
-      button.replaceWith(ackedMark());
-    } catch (err) {
-      console.error(err);
-      button.disabled = false;
-    }
-  });
-  return button;
-}
-
 function ackedMark() {
   const mark = document.createElement('span');
   mark.dataset.testid = 'acked';
@@ -74,12 +38,103 @@ function ackedMark() {
   return mark;
 }
 
-// Keyed by incident id: existing rows (and their buttons) are kept, new ones go on top in API order.
-function render(incidents) {
+function createRow(incident) {
+  const li = document.createElement('li');
+  li.dataset.testid = 'incident-row';
+  li.dataset.id = incident.id;
+  li.tabIndex = 0;
+  li.setAttribute('role', 'button');
+  li.innerHTML = `<span class="id"></span><span class="sev"></span><span class="what"></span><time></time><span class="state"></span>`;
+  li.querySelector('.id').textContent = incident.id;
+  if (acked.has(incident.id)) li.querySelector('.state').append(ackedMark());
+  li.addEventListener('click', () => openPanel(incident.id));
+  li.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openPanel(incident.id);
+    }
+  });
+  return li;
+}
+
+function updateRow(li, incident) {
+  li.className = `row ${incident.severity}${incident.id === selectedId ? ' selected' : ''}`;
+  li.setAttribute('aria-pressed', String(incident.id === selectedId));
+  li.querySelector('.sev').textContent = incident.severity;
+  li.querySelector('.what').textContent = `${incident.service} · ${incident.region} · ${incident.summary}`;
+  const time = li.querySelector('time');
+  time.dateTime = incident.openedAt;
+  time.title = incident.openedAt;
+  time.textContent = localTime(incident.openedAt);
+}
+
+function markRowAcked(id) {
+  const state = rows.get(id)?.querySelector('.state');
+  if (state && !state.querySelector('[data-testid="acked"]')) state.append(ackedMark());
+}
+
+// The panel acks the incident it names, never whatever row is under the pointer.
+function renderPanel() {
+  const incident = incidents.get(selectedId);
+  if (!incident) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  panel.dataset.id = incident.id;
+  panel.querySelector('.panel-id').textContent = incident.id;
+  panel.querySelector('.panel-sev').textContent = incident.severity;
+  panel.querySelector('.panel-service').textContent = `${incident.service} · ${incident.region}`;
+  panel.querySelector('.panel-summary').textContent = incident.summary;
+  const time = panel.querySelector('time');
+  time.dateTime = incident.openedAt;
+  time.title = incident.openedAt;
+  time.textContent = localTime(incident.openedAt);
+  const button = panel.querySelector('[data-testid="panel-ack"]');
+  const isAcked = acked.has(incident.id);
+  button.hidden = isAcked;
+  button.textContent = `Ack ${incident.id}`;
+  panel.querySelector('.panel-acked').hidden = !isAcked;
+}
+
+function openPanel(id) {
+  const previous = rows.get(selectedId);
+  if (previous) {
+    previous.classList.remove('selected');
+    previous.setAttribute('aria-pressed', 'false');
+  }
+  selectedId = id;
+  const row = rows.get(id);
+  row?.classList.add('selected');
+  row?.setAttribute('aria-pressed', 'true');
+  renderPanel();
+}
+
+const panelAck = panel.querySelector('[data-testid="panel-ack"]');
+panelAck.addEventListener('click', async () => {
+  const id = panel.dataset.id;
+  if (!id || acked.has(id)) return;
+  panelAck.disabled = true;
+  try {
+    await ack(id);
+    acked.add(id);
+    markRowAcked(id);
+  } catch (err) {
+    console.error(err);
+  } finally {
+    panelAck.disabled = false;
+    renderPanel();
+  }
+});
+panel.querySelector('.panel-close').addEventListener('click', () => openPanel(null));
+
+// Keyed by incident id: existing rows are kept, new ones go on top in API order.
+function render(list_) {
   const seen = new Set();
   let previous = null;
-  for (const incident of incidents) {
+  for (const incident of list_) {
     seen.add(incident.id);
+    incidents.set(incident.id, incident);
     let li = rows.get(incident.id);
     if (!li) {
       li = createRow(incident);
@@ -94,9 +149,11 @@ function render(incidents) {
     if (!seen.has(id)) {
       li.remove();
       rows.delete(id);
+      incidents.delete(id);
     }
   }
-  empty.hidden = incidents.length > 0;
+  empty.hidden = list_.length > 0;
+  renderPanel();
 }
 
 async function refresh() {
